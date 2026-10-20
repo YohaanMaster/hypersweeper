@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Hypersweeper</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700&family=IBM+Plex+Mono:wght@500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#ece3d1; --panel:#e3d8bd; --panel2:#d9cba8; --line:#c3b183;
+    --text:#2c271f; --muted:#766a53; --accent:#2f6f5e; --accent2:#a8491f;
+    --mine:#9c2b22; --flag:#9c6b10; --cell:#d4c4a0; --cell-hover:#c8b78e;
+    --revealed:#f2ead7; --hi:#a8491f;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; min-height:100vh; background:var(--bg);
+    color:var(--text); font-family:'Inter',system-ui,-apple-system,Arial,sans-serif;
+    display:flex; flex-direction:column; align-items:center; padding:28px 12px 36px;
+  }
+  header{ text-align:center; margin-bottom:18px; }
+  h1{
+    margin:0; font-family:'Fraunces',Georgia,serif; font-weight:700;
+    font-size:1.8em; letter-spacing:0.5px; color:var(--text);
+  }
+
+  .topbar{
+    display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:center;
+    margin-bottom:10px; width:100%; max-width:640px;
+  }
+  .stat{
+    background:var(--panel); border:1px solid var(--line); border-radius:3px;
+    padding:6px 14px; font-size:0.82em; min-width:66px; text-align:center; color:var(--muted);
+  }
+  .stat b{ display:block; font-size:1.05em; color:var(--text); font-family:'IBM Plex Mono',monospace; font-weight:600; }
+  button{
+    background:var(--panel); color:var(--text); border:1px solid var(--line);
+    border-radius:3px; padding:7px 15px; cursor:pointer; font-size:0.85em;
+    font-family:inherit; font-weight:500; transition:background .12s,border-color .12s;
+  }
+  button:hover{ background:var(--panel2); border-color:var(--accent2); }
+  button.active{ background:var(--accent); color:#f2ead7; border-color:var(--accent); }
+
+  .toggleBtn{ min-width:110px; }
+
+  .boardwrap{
+    background:var(--panel); border:1px solid var(--line); border-radius:4px;
+    padding:16px; max-width:900px; width:100%;
+  }
+
+  /* ---------- Layer view ---------- */
+  #layerView{ display:none; }
+  .layerGrid{
+    display:grid; grid-template-columns:repeat(4, auto); gap:8px; justify-content:center;
+  }
+  .zwBlock{
+    background:var(--panel2); border:1px solid var(--line); padding:5px;
+  }
+  .zwLabel{ text-align:center; font-size:0.62em; color:var(--muted); margin-bottom:3px; letter-spacing:0.5px; font-family:'IBM Plex Mono',monospace;}
+  .xyGrid{ display:grid; grid-template-columns:repeat(4, 24px); grid-template-rows:repeat(4,24px); gap:2px; }
+
+  .cell{
+    width:24px; height:24px; background:var(--cell);
+    display:flex; align-items:center; justify-content:center;
+    font-size:11px; font-weight:700; cursor:pointer; user-select:none;
+    border:1px solid #b4a27d; color:var(--text); font-family:'IBM Plex Mono',monospace;
+  }
+  .cell:hover{ background:var(--cell-hover); }
+  .cell.revealed{ background:var(--revealed); cursor:default; border-color:#d8cdb0; }
+  .cell.revealed:hover{ background:var(--revealed); }
+  .cell.flag{ background:#e5d19a; color:var(--flag); }
+  .cell.mine{ background:var(--mine); color:#f2ead7; }
+  .cell.nb{ outline:2px solid var(--hi); outline-offset:-2px; }
+
+  .c1{color:#2f6f5e;} .c2{color:#3f7d32;} .c3{color:#a8491f;} .c4{color:#8c2f24;}
+  .c5{color:#6a4c93;} .c6{color:#9c6b10;} .chigh{color:#7a1f3d;}
+
+  /* ---------- Rotate (canvas) view ---------- */
+  #rotView{ display:none; flex-direction:column; align-items:center; gap:12px; }
+  .rotControls{ display:flex; gap:16px; justify-content:center; align-items:center; }
+  canvas#cv{
+    display:block; width:min(100%,480px); aspect-ratio:1; touch-action:none;
+    cursor:grab; border-radius:4px; border:1px solid var(--line);
+    background:var(--revealed);
+  }
+
+  .knobWrap{ display:flex; flex-direction:column; align-items:center; gap:4px; }
+  .knobLabel{ font-size:0.68em; color:var(--muted); letter-spacing:0.4px; }
+  .knob{
+    width:50px; height:50px; border-radius:50%; border:2px solid var(--line);
+    position:relative; background:var(--panel2); cursor:grab; touch-action:none;
+  }
+  .knob .indicator{
+    position:absolute; left:50%; top:50%; width:2px; height:20px;
+    background:var(--accent2); transform-origin:top center; margin-left:-1px; margin-top:0;
+  }
+  .knob .indicator::after{
+    content:''; position:absolute; top:-3px; left:50%; width:6px; height:6px;
+    margin-left:-3px; background:var(--accent2); border-radius:50%;
+  }
+
+  #message{
+    margin-top:12px; padding:9px 16px; border-radius:3px; font-weight:600; display:none;
+    text-align:center; max-width:500px; font-size:0.92em;
+  }
+  #message.win{ display:block; background:#dbe6d4; color:var(--accent); border:1px solid var(--accent);}
+  #message.lose{ display:block; background:#e8d2cc; color:var(--mine); border:1px solid var(--mine);}
+
+  footer{ margin-top:18px; color:var(--muted); font-size:0.75em; text-align:center; }
+
+  /* ---------- Help modal ---------- */
+  .overlay{
+    display:none; position:fixed; inset:0; background:rgba(44,39,31,0.55);
+    align-items:center; justify-content:center; padding:20px; z-index:10;
+  }
+  .overlay.show{ display:flex; }
+  .modal{
+    background:var(--bg); border:1px solid var(--line); border-radius:4px;
+    max-width:460px; width:100%; max-height:85vh; overflow-y:auto; padding:22px 24px;
+  }
+  .modal h2{
+    margin:0 0 12px; font-family:'Fraunces',Georgia,serif; font-weight:700; font-size:1.2em;
+  }
+  .modal h3{
+    margin:16px 0 6px; font-size:0.85em; letter-spacing:0.4px; color:var(--accent2);
+    text-transform:uppercase;
+  }
+  .modal p, .modal li{ font-size:0.88em; line-height:1.5; color:var(--text); }
+  .modal ul{ margin:4px 0; padding-left:20px; }
+  .modal .closeRow{ text-align:right; margin-top:18px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Hypersweeper</h1>
+</header>
+
+<div class="topbar">
+  <div class="stat">Mines<br><b id="mineCount">--</b></div>
+  <div class="stat">Flags<br><b id="flagCount">0</b></div>
+  <div class="stat">Time<br><b id="timer">0:00</b></div>
+  <button id="helpBtn">Help</button>
+</div>
+
+<div class="topbar">
+  <button id="viewToggle" class="toggleBtn">View: Layers</button>
+</div>
+
+<div class="boardwrap">
+
+  <div id="layerView">
+    <div class="layerGrid" id="layerGrid"></div>
+  </div>
+
+  <div id="rotView">
+    <canvas id="cv" width="480" height="480"></canvas>
+    <div class="rotControls">
+      <div class="knobWrap">
+        <div class="knob" id="knob"><div class="indicator" id="knobIndicator"></div></div>
+        <div class="knobLabel">4D angle</div>
+      </div>
+      <button id="spinBtn">Auto-spin</button>
+    </div>
+  </div>
+
+</div>
+
+<div id="message"></div>
+
+<footer>Left-click to reveal · Right-click to flag</footer>
+
+<div class="overlay" id="helpOverlay">
+  <div class="modal">
+    <h2>How to play</h2>
+    <p>Hypersweeper is minesweeper played on a 4-dimensional board. There are 256 cells residing on a 4x4x4x4 hypercube, with each cell having up to 80 neighbours. In the layer view, you can see all 16 "slices" that make up the hypercube, while in the rotate view you can visualise it as a projection in 3D space.</p>
+    <p>Like regular minesweeper, left click on a cell to reveal how many of its neighbours are mines, and right click to flag it as a suspected mine. Left clicking a revealed cell which has all the mines around it flagged with reveal its remaining neighbours.</p>
+    <div class="closeRow"><button id="helpCloseBtn">Close</button></div>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+const SIZE = 4, N = SIZE**4, MINES = 28;
+function idx(x,y,z,w){ return x + SIZE*y + SIZE*SIZE*z + SIZE*SIZE*SIZE*w; }
+function coords(i){
+  const x=i%SIZE; i=(i-x)/SIZE;
+  const y=i%SIZE; i=(i-y)/SIZE;
+  const z=i%SIZE; i=(i-z)/SIZE;
+  const w=i;
+  return [x,y,z,w];
+}
+const NEIGHBORS = new Array(N);
+for(let i=0;i<N;i++){
+  const [x,y,z,w]=coords(i);
+  const list=[];
+  for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++)for(let dz=-1;dz<=1;dz++)for(let dw=-1;dw<=1;dw++){
+    if(!dx&&!dy&&!dz&&!dw) continue;
+    const nx=x+dx,ny=y+dy,nz=z+dz,nw=w+dw;
+    if(nx<0||nx>=SIZE||ny<0||ny>=SIZE||nz<0||nz>=SIZE||nw<0||nw>=SIZE) continue;
+    list.push(idx(nx,ny,nz,nw));
+  }
+  NEIGHBORS[i]=list;
+}
+
+function mulberry32(seed){
+  let a = seed>>>0;
+  return function(){
+    a|=0; a=(a+0x6D2B79F5)|0;
+    let t=Math.imul(a^(a>>>15), 1|a);
+    t=(t+Math.imul(t^(t>>>7), 61|t))^t;
+    return ((t^(t>>>14))>>>0)/4294967296;
+  };
+}
+function shuffleIndices(rng){
+  const arr=Array.from({length:N},(_,i)=>i);
+  for(let i=N-1;i>0;i--){ const j=Math.floor(rng()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; }
+  return arr;
+}
+function placeMines(rng, mineCount){
+  const perm=shuffleIndices(rng);
+  const mines=new Uint8Array(N);
+  for(let k=0;k<mineCount;k++) mines[perm[k]]=1;
+  return mines;
+}
+function computeCounts(mines){
+  const counts=new Int8Array(N);
+  for(let i=0;i<N;i++){
+    if(mines[i]){ counts[i]=-1; continue; }
+    let c=0; for(const n of NEIGHBORS[i]) if(mines[n]) c++;
+    counts[i]=c;
+  }
+  return counts;
+}
+function floodReveal(mines, counts, start, revealed){
+  const stack=[start]; revealed[start]=1;
+  while(stack.length){
+    const c=stack.pop();
+    if(counts[c]===0){
+      for(const n of NEIGHBORS[c]){
+        if(!revealed[n] && !mines[n]){ revealed[n]=1; stack.push(n); }
+      }
+    }
+  }
+}
+function pickStartCell(mines, counts){
+  const zeroCells=[];
+  for(let i=0;i<N;i++) if(!mines[i] && counts[i]===0) zeroCells.push(i);
+  if(zeroCells.length){
+    let best=-1,bestSize=-1;
+    for(const c of zeroCells){
+      const revealed=new Uint8Array(N);
+      floodReveal(mines,counts,c,revealed);
+      let size=0; for(let i=0;i<N;i++) size+=revealed[i];
+      if(size>bestSize){ bestSize=size; best=c; }
+    }
+    return best;
+  }
+  let best=-1,bestC=999;
+  for(let i=0;i<N;i++) if(!mines[i] && counts[i]<bestC){ bestC=counts[i]; best=i; }
+  return best;
+}
+
+// ---- Logic solver (generation only) ----
+function solveLogically(mines, counts, startRevealed, CAP){
+  const revealed=new Uint8Array(N); revealed.set(startRevealed);
+  const knownMine=new Uint8Array(N);
+  let minesTotal=0; for(let i=0;i<N;i++) minesTotal+=mines[i];
+  const totalSafe = N - minesTotal;
+  function countRevealed(){ let s=0; for(let i=0;i<N;i++) s+=revealed[i]; return s; }
+  function revealCell(i){
+    if(revealed[i]) return;
+    revealed[i]=1;
+    if(counts[i]===0){
+      const stack=[i];
+      while(stack.length){
+        const c=stack.pop();
+        if(counts[c]===0){
+          for(const n of NEIGHBORS[c]) if(!revealed[n] && !mines[n]){ revealed[n]=1; stack.push(n); }
+        }
+      }
+    }
+  }
+  while(true){
+    let changed=false;
+    const constraints=[];
+    for(let i=0;i<N;i++){
+      if(!revealed[i] || counts[i]<=0) continue;
+      const unknowns=[]; let remaining=counts[i];
+      for(const n of NEIGHBORS[i]){
+        if(knownMine[n]){ remaining--; continue; }
+        if(!revealed[n]) unknowns.push(n);
+      }
+      if(unknowns.length>0) constraints.push({unknowns, remaining});
+    }
+    for(const con of constraints){
+      if(con.remaining===0){
+        for(const u of con.unknowns) if(!revealed[u]){ revealCell(u); changed=true; }
+      } else if(con.remaining===con.unknowns.length){
+        for(const u of con.unknowns) if(!knownMine[u]){ knownMine[u]=1; changed=true; }
+      }
+    }
+    if(changed) continue;
+    const csets=constraints.map(c=>({set:new Set(c.unknowns), remaining:c.remaining}));
+    let subsetChanged=false;
+    outer:
+    for(let a=0;a<csets.length;a++){
+      for(let b=0;b<csets.length;b++){
+        if(a===b) continue;
+        const A=csets[a], B=csets[b];
+        if(A.set.size===0 || B.set.size===0 || A.set.size>=B.set.size) continue;
+        let isSub=true;
+        for(const x of A.set) if(!B.set.has(x)){ isSub=false; break; }
+        if(!isSub) continue;
+        const diffSet=[...B.set].filter(x=>!A.set.has(x));
+        const diffRem=B.remaining-A.remaining;
+        if(diffSet.length===0) continue;
+        if(diffRem===0){
+          for(const u of diffSet) if(!revealed[u]){ revealCell(u); subsetChanged=true; }
+          if(subsetChanged) break outer;
+        } else if(diffRem===diffSet.length){
+          for(const u of diffSet) if(!knownMine[u]){ knownMine[u]=1; subsetChanged=true; }
+          if(subsetChanged) break outer;
+        }
+      }
+    }
+    if(subsetChanged) continue;
+    const cellToConstraints=new Map();
+    constraints.forEach((c,ci)=>{
+      for(const u of c.unknowns){
+        if(!cellToConstraints.has(u)) cellToConstraints.set(u,[]);
+        cellToConstraints.get(u).push(ci);
+      }
+    });
+    const visitedC=new Uint8Array(constraints.length);
+    let bruteChanged=false;
+    for(let ci=0; ci<constraints.length && !bruteChanged; ci++){
+      if(visitedC[ci]) continue;
+      const compConstraints=[]; const compCellsSet=new Set();
+      const queue=[ci]; visitedC[ci]=1;
+      while(queue.length){
+        const cur=queue.pop();
+        compConstraints.push(cur);
+        for(const u of constraints[cur].unknowns){
+          compCellsSet.add(u);
+          for(const other of cellToConstraints.get(u)) if(!visitedC[other]){ visitedC[other]=1; queue.push(other); }
+        }
+      }
+      const compCells=[...compCellsSet];
+      if(compCells.length===0 || compCells.length>CAP) continue;
+      const cellIndexMap=new Map(compCells.map((c,i)=>[c,i]));
+      const validAssignments=[];
+      const totalCombos=1<<compCells.length;
+      for(let mask=0; mask<totalCombos; mask++){
+        let ok=true;
+        for(const cIdx of compConstraints){
+          const con=constraints[cIdx];
+          let cnt=0;
+          for(const u of con.unknowns) if(mask & (1<<cellIndexMap.get(u))) cnt++;
+          if(cnt!==con.remaining){ ok=false; break; }
+        }
+        if(ok) validAssignments.push(mask);
+      }
+      if(validAssignments.length===0) continue;
+      for(let bit=0; bit<compCells.length; bit++){
+        let allMine=true, allSafe=true;
+        for(const mask of validAssignments){
+          if(mask & (1<<bit)) allSafe=false; else allMine=false;
+          if(!allMine && !allSafe) break;
+        }
+        const cell=compCells[bit];
+        if(allMine && !knownMine[cell]){ knownMine[cell]=1; bruteChanged=true; }
+        else if(allSafe && !revealed[cell]){ revealCell(cell); bruteChanged=true; }
+      }
+    }
+    if(bruteChanged) continue;
+    break;
+  }
+  const rc=countRevealed();
+  return { solved: rc===totalSafe };
+}
+
+function generatePuzzle(mineCount, maxAttempts, CAP){
+  for(let a=0;a<maxAttempts;a++){
+    const seed = (Math.floor(Math.random()*2**31) ^ (a*2654435761)) >>> 0;
+    const rng = mulberry32(seed);
+    const mines = placeMines(rng, mineCount);
+    const counts = computeCounts(mines);
+    const start = pickStartCell(mines, counts);
+    const startRevealed = new Uint8Array(N);
+    floodReveal(mines, counts, start, startRevealed);
+    const res = solveLogically(mines, counts, startRevealed, CAP);
+    if(res.solved){
+      return { mines, counts, startRevealed, start };
+    }
+  }
+  const rng = mulberry32(Date.now()>>>0);
+  const mines = placeMines(rng, mineCount);
+  const counts = computeCounts(mines);
+  const start = pickStartCell(mines, counts);
+  const startRevealed = new Uint8Array(N);
+  floodReveal(mines, counts, start, startRevealed);
+  return { mines, counts, startRevealed, start };
+}
+
+// ---------------- Game state ----------------
+let game = null;
+let timerInterval = null, startTime = null;
+let currentView = 'layer';
+let hov = -1;
+let boomIndex = -1;
+
+function countClass(c){
+  if(c<=0) return '';
+  if(c>=7) return 'chigh';
+  return 'c'+Math.min(c,6);
+}
+
+function newGame(){
+  stopTimer();
+  boomIndex = -1; hov = -1;
+  const puzzle = generatePuzzle(MINES, 400, 16);
+  game = {
+    mines: puzzle.mines,
+    counts: puzzle.counts,
+    revealed: new Uint8Array(N),
+    flagged: new Uint8Array(N),
+    over: false,
+    won: false,
+  };
+  game.revealed.set(puzzle.startRevealed);
+  document.getElementById('mineCount').textContent = MINES;
+  document.getElementById('flagCount').textContent = '0';
+  const msg = document.getElementById('message');
+  msg.style.display='none'; msg.className='';
+  startTimer();
+  renderAll();
+}
+
+function startTimer(){
+  startTime = Date.now();
+  updateTimerDisplay();
+  timerInterval = setInterval(updateTimerDisplay, 1000);
+}
+function stopTimer(){ if(timerInterval) clearInterval(timerInterval); }
+function updateTimerDisplay(){
+  const s = Math.floor((Date.now()-startTime)/1000);
+  const m = Math.floor(s/60), r = s%60;
+  document.getElementById('timer').textContent = `${m}:${r.toString().padStart(2,'0')}`;
+}
+
+function totalSafeCount(){
+  let s=0; for(let i=0;i<N;i++) if(!game.mines[i]) s++;
+  return s;
+}
+function revealedSafeCount(){
+  let s=0; for(let i=0;i<N;i++) if(game.revealed[i] && !game.mines[i]) s++;
+  return s;
+}
+
+function floodRevealPlayer(start){
+  const stack=[start];
+  game.revealed[start]=1;
+  while(stack.length){
+    const c=stack.pop();
+    if(game.counts[c]===0){
+      for(const n of NEIGHBORS[c]) if(!game.revealed[n] && !game.mines[n] && !game.flagged[n]){
+        game.revealed[n]=1; stack.push(n);
+      }
+    }
+  }
+}
+
+function act(i, flagAction){
+  if(!game || game.over || i<0) return;
+  if(flagAction){
+    if(!game.revealed[i]) game.flagged[i] = game.flagged[i] ? 0 : 1;
+  } else if(game.revealed[i]){
+    // chord: if flagged neighbors == count, reveal rest
+    const c = game.counts[i];
+    if(c>0 && NEIGHBORS[i].filter(n=>game.flagged[n]).length===c){
+      for(const n of NEIGHBORS[i]){
+        if(!game.flagged[n] && !game.revealed[n]){
+          if(game.mines[n]){ triggerLoss(n); return; }
+          floodRevealPlayer(n);
+        }
+      }
+      checkWin();
+    }
+  } else if(!game.flagged[i]){
+    if(game.mines[i]){ triggerLoss(i); return; }
+    floodRevealPlayer(i);
+    checkWin();
+  }
+  let fc=0; for(let k=0;k<N;k++) fc+=game.flagged[k];
+  document.getElementById('flagCount').textContent = fc;
+  renderAll();
+}
+
+function checkWin(){
+  if(revealedSafeCount() === totalSafeCount()) endGame(true);
+}
+function triggerLoss(i){
+  game.revealed[i]=1;
+  boomIndex = i;
+  endGame(false);
+  renderAll();
+}
+
+function endGame(won){
+  game.over = true; game.won = won;
+  stopTimer();
+  const msg = document.getElementById('message');
+  if(won){
+    msg.textContent = 'Cleared — starting a new puzzle…';
+    msg.className = 'win';
+  } else {
+    for(let i=0;i<N;i++) if(game.mines[i]) game.revealed[i]=1;
+    msg.textContent = 'Boom — starting a new puzzle…';
+    msg.className = 'lose';
+  }
+  msg.style.display='block';
+  renderAll();
+  setTimeout(newGame, 1400);
+}
+
+// ---------------- Rendering: Layer View ----------------
+// sliceAxes value "ab_cd": a,b are the two grid (inner) axes, c,d are the two panel (outer) axes.
+const AXIS_NAMES = ['x','y','z','w'];
+const sliceMode = 'xy_zw';
+
+function axesFor(mode){
+  const [inner, outer] = mode.split('_');
+  return { inner: inner.split(''), outer: outer.split('') };
+}
+
+function buildLayerSkeleton(){
+  const grid = document.getElementById('layerGrid');
+  grid.innerHTML='';
+  const { inner, outer } = axesFor(sliceMode);
+  const coordOf = {};
+  for(let o1=0; o1<SIZE; o1++){
+    for(let o2=0; o2<SIZE; o2++){
+      const block = document.createElement('div');
+      block.className='zwBlock';
+      const label = document.createElement('div');
+      label.className='zwLabel';
+      label.textContent = `${outer[0]}${o1} ${outer[1]}${o2}`;
+      block.appendChild(label);
+      const xyGrid = document.createElement('div');
+      xyGrid.className='xyGrid';
+      for(let i2=0; i2<SIZE; i2++){
+        for(let i1=0; i1<SIZE; i1++){
+          coordOf[inner[0]] = i1; coordOf[inner[1]] = i2;
+          coordOf[outer[0]] = o1; coordOf[outer[1]] = o2;
+          const cellEl = document.createElement('div');
+          cellEl.className='cell';
+          const i = idx(coordOf.x, coordOf.y, coordOf.z, coordOf.w);
+          cellEl.dataset.idx = i;
+          cellEl.addEventListener('click', ()=>act(i,false));
+          cellEl.addEventListener('contextmenu', e=>{ e.preventDefault(); act(i,true); });
+          cellEl.addEventListener('mouseover', ()=>{ hov=i; renderAll(); });
+          xyGrid.appendChild(cellEl);
+        }
+      }
+      block.appendChild(xyGrid);
+      grid.appendChild(block);
+    }
+  }
+  grid.addEventListener('mouseleave', ()=>{ hov=-1; renderAll(); });
+}
+
+function renderLayer(){
+  const nbSet = hov>=0 ? new Set(NEIGHBORS[hov]) : null;
+  const cellsEls = document.querySelectorAll('#layerGrid .cell');
+  cellsEls.forEach(el=>{
+    const i = parseInt(el.dataset.idx,10);
+    paintCellElement(el, i, nbSet);
+  });
+}
+
+function paintCellElement(el, i, nbSet){
+  el.className='cell';
+  if(nbSet && (nbSet.has(i) || i===hov)) el.classList.add('nb');
+  if(game.flagged[i] && !game.revealed[i]){
+    el.classList.add('flag');
+    el.textContent='\u2691';
+    return;
+  }
+  if(!game.revealed[i]){
+    el.textContent='';
+    return;
+  }
+  el.classList.add('revealed');
+  if(game.mines[i]){
+    el.classList.add('mine');
+    el.textContent='\u2716';
+    return;
+  }
+  const c = game.counts[i];
+  el.textContent = c>0 ? c : '';
+  if(c>0) el.classList.add(countClass(c));
+}
+
+// ---------------- Rendering: Rotate (canvas) View ----------------
+const cv = document.getElementById('cv');
+let ang = 35, spinning = false, zoom = 1;
+let yaw = .7, pit = .5, pts = [];
+
+function proj(){
+  const W = cv.clientWidth || 480, H = cv.clientHeight || 480;
+  const cy=Math.cos(yaw), sy=Math.sin(yaw), cp=Math.cos(pit), sp=Math.sin(pit);
+  const sc = (W/(3.6*SIZE))*zoom, h=(SIZE-1)/2, D0=SIZE*3.2, a=ang*Math.PI/180;
+  const P=(x,y,z)=>{
+    const x1=x*cy+z*sy, z1=-x*sy+z*cy, y1=y*cp-z1*sp, z2=y*sp+z1*cp, s=D0/(D0+z2);
+    return {px:W/2+x1*sc*s, py:H/2+y1*sc*s, s, z:z2};
+  };
+  const o=[];
+  for(let i=0;i<N;i++){
+    const w=(i/(SIZE*SIZE*SIZE))|0, x=i%SIZE-h, y=((i/SIZE)|0)%SIZE-h, z=((i/(SIZE*SIZE))|0)%SIZE-h;
+    const ww=w-h, k=1/(1-(x*Math.sin(a)+ww*Math.cos(a))/5);
+    const q=[(x*Math.cos(a)-ww*Math.sin(a))*k*1.7, y*k*1.7, z*k*1.7, k];
+    const p=P(q[0],q[1],q[2]);
+    o.push({i, px:p.px, py:p.py, r:sc*p.s*q[3]*.34, z:p.z});
+  }
+  o.sort((a,b)=>b.z-a.z);
+  return o;
+}
+
+function draw(){
+  if(currentView!=='rot' || !game) return;
+  const dpr = devicePixelRatio||1, W = cv.clientWidth||480, H = cv.clientHeight||480;
+  if(cv.width!==Math.round(W*dpr)){ cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr); }
+  const g = cv.getContext('2d');
+  g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+  pts = proj();
+  const nbSet = hov>=0 ? new Set(NEIGHBORS[hov]) : null;
+  g.textAlign='center'; g.textBaseline='middle';
+
+  for(const p of pts){
+    const i = p.i;
+    const isGhost = game.revealed[i] && !game.mines[i] && !game.counts[i];
+    p.vis = !isGhost;
+    g.beginPath();
+    g.roundRect(p.px-p.r, p.py-p.r, 2*p.r, 2*p.r, Math.max(1,p.r*.15));
+    if(isGhost){
+      g.globalAlpha = .18; g.strokeStyle='#766a53'; g.lineWidth=1; g.stroke();
+    } else {
+      g.globalAlpha = game.revealed[i]?.95:.72;
+      g.fillStyle = (i===boomIndex) ? '#9c2b22' : (game.flagged[i] && !game.revealed[i]) ? '#e5d19a' : game.revealed[i] ? '#f2ead7' : '#d4c4a0';
+      g.fill();
+      g.lineWidth=1; g.strokeStyle='#b4a27d'; g.stroke();
+    }
+    if(nbSet && (nbSet.has(i)||i===hov)){
+      g.globalAlpha=1; g.strokeStyle='#a8491f'; g.lineWidth=2; g.stroke();
+    }
+    if(isGhost) continue;
+    g.globalAlpha=1;
+    let t='', col='#2c271f';
+    if(game.revealed[i]){
+      if(game.mines[i]){ t='\u2716'; col='#f2ead7'; }
+      else if(game.counts[i]>0){ t=game.counts[i]; col=countColor(game.counts[i]); }
+    } else if(game.flagged[i]){ t='\u2691'; col='#9c6b10'; }
+    if(t){
+      g.font = `700 ${Math.max(9,p.r*1.05)}px 'IBM Plex Mono',monospace`;
+      g.fillStyle = col;
+      g.fillText(t, p.px, p.py+1);
+    }
+  }
+  g.globalAlpha=1;
+}
+function countColor(c){
+  const map={1:'#2f6f5e',2:'#3f7d32',3:'#a8491f',4:'#8c2f24',5:'#6a4c93',6:'#9c6b10'};
+  return map[c] || '#7a1f3d';
+}
+function hit(e){
+  const b = cv.getBoundingClientRect();
+  const x = e.clientX-b.left, y = e.clientY-b.top;
+  for(let k=pts.length-1;k>=0;k--){
+    const p=pts[k];
+    if(p.vis && Math.abs(x-p.px)<p.r && Math.abs(y-p.py)<p.r) return p.i;
+  }
+  return -1;
+}
+let drag=null, lpTimer=0, lpDone=false;
+cv.addEventListener('pointerdown', e=>{
+  if(e.button!==0) return;
+  drag={x:e.clientX,y:e.clientY,moved:false}; lpDone=false;
+  cv.setPointerCapture(e.pointerId);
+  if(e.pointerType==='touch'){
+    const i=hit(e);
+    lpTimer=setTimeout(()=>{ if(drag && !drag.moved){ lpDone=true; act(i,true); } },420);
+  }
+});
+cv.addEventListener('pointermove', e=>{
+  if(drag){
+    const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
+    if(drag.moved || Math.hypot(dx,dy)>5){
+      drag.moved=true; clearTimeout(lpTimer);
+      yaw -= dx*.01; pit = Math.max(-1.5, Math.min(1.5, pit+dy*.01));
+      drag.x=e.clientX; drag.y=e.clientY; draw();
+    }
+  } else if(e.pointerType==='mouse'){
+    const h = hit(e);
+    if(h!==hov){ hov=h; draw(); }
+  }
+});
+cv.addEventListener('pointerup', e=>{
+  clearTimeout(lpTimer);
+  if(drag && !drag.moved && !lpDone) act(hit(e), false);
+  drag=null;
+});
+cv.addEventListener('contextmenu', e=>{ e.preventDefault(); act(hit(e), true); });
+cv.addEventListener('mouseleave', ()=>{ hov=-1; draw(); });
+cv.addEventListener('wheel', e=>{
+  e.preventDefault();
+  zoom = Math.max(0.4, Math.min(3, zoom * (e.deltaY<0 ? 1.08 : 0.92)));
+  draw();
+}, {passive:false});
+addEventListener('resize', draw);
+
+function renderAll(){
+  renderLayer();
+  draw();
+}
+
+// ---------------- Controls ----------------
+function showView(v){
+  currentView = v;
+  document.getElementById('layerView').style.display = v==='layer' ? 'block':'none';
+  document.getElementById('rotView').style.display = v==='rot' ? 'flex':'none';
+  document.getElementById('viewToggle').textContent = v==='layer' ? 'View: Layers' : 'View: Rotate';
+  renderAll();
+}
+document.getElementById('viewToggle').addEventListener('click', ()=>{
+  showView(currentView==='layer' ? 'rot' : 'layer');
+});
+
+function setAngle(deg){
+  ang = ((deg%360)+360)%360;
+  document.getElementById('knobIndicator').style.transform = `rotate(${ang}deg)`;
+  draw();
+}
+const knob = document.getElementById('knob');
+let knobDrag=false;
+knob.addEventListener('pointerdown', e=>{ knobDrag=true; knob.setPointerCapture(e.pointerId); updateKnobFromEvent(e); });
+knob.addEventListener('pointermove', e=>{ if(knobDrag) updateKnobFromEvent(e); });
+knob.addEventListener('pointerup', ()=>{ knobDrag=false; });
+function updateKnobFromEvent(e){
+  const b = knob.getBoundingClientRect();
+  const cx = b.left+b.width/2, cy = b.top+b.height/2;
+  const dx = e.clientX-cx, dy = e.clientY-cy;
+  const deg = Math.atan2(dx, -dy)*180/Math.PI;
+  setAngle(deg);
+}
+function spinStep(){
+  if(!spinning) return;
+  setAngle(ang+.5);
+  requestAnimationFrame(spinStep);
+}
+document.getElementById('spinBtn').addEventListener('click', ()=>{
+  spinning=!spinning;
+  const btn=document.getElementById('spinBtn');
+  btn.classList.toggle('active', spinning);
+  btn.textContent = spinning ? 'Stop spin' : 'Auto-spin';
+  spinStep();
+});
+
+const helpOverlay = document.getElementById('helpOverlay');
+document.getElementById('helpBtn').addEventListener('click', ()=> helpOverlay.classList.add('show'));
+document.getElementById('helpCloseBtn').addEventListener('click', ()=> helpOverlay.classList.remove('show'));
+helpOverlay.addEventListener('click', e=>{ if(e.target===helpOverlay) helpOverlay.classList.remove('show'); });
+
+// ---------------- Init ----------------
+buildLayerSkeleton();
+setAngle(ang);
+newGame();
+showView('layer');
+
+})();
+</script>
+</body>
+</html>

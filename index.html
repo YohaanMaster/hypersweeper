@@ -146,6 +146,7 @@
 
 <div class="topbar">
   <button id="viewToggle" class="toggleBtn">View: Layers</button>
+  <button id="sizeToggle" class="toggleBtn">Easy mode</button>
 </div>
 
 <div class="boardwrap">
@@ -169,7 +170,9 @@
 
 <div id="message"></div>
 
-<footer>Made by Yohaan Master</footer>
+<footer>
+  Made by Yohaan Master
+</footer>
 
 <div class="overlay" id="helpOverlay">
   <div class="modal">
@@ -183,7 +186,11 @@
 <script>
 (function(){
 "use strict";
-const SIZE = 4, N = SIZE**4, MINES = 28;
+const MODES = {
+  4: { size:4, mines:28, cap:16, label:'Hard mode', minFrac:0.14, maxFrac:0.30 },
+  3: { size:3, mines:10, cap:14, label:'Easy mode', minFrac:0.18, maxFrac:0.40 }
+};
+let SIZE = 3, N = SIZE**4, MINES = 10, CAP = 14;
 function idx(x,y,z,w){ return x + SIZE*y + SIZE*SIZE*z + SIZE*SIZE*SIZE*w; }
 function coords(i){
   const x=i%SIZE; i=(i-x)/SIZE;
@@ -192,18 +199,22 @@ function coords(i){
   const w=i;
   return [x,y,z,w];
 }
-const NEIGHBORS = new Array(N);
-for(let i=0;i<N;i++){
-  const [x,y,z,w]=coords(i);
-  const list=[];
-  for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++)for(let dz=-1;dz<=1;dz++)for(let dw=-1;dw<=1;dw++){
-    if(!dx&&!dy&&!dz&&!dw) continue;
-    const nx=x+dx,ny=y+dy,nz=z+dz,nw=w+dw;
-    if(nx<0||nx>=SIZE||ny<0||ny>=SIZE||nz<0||nz>=SIZE||nw<0||nw>=SIZE) continue;
-    list.push(idx(nx,ny,nz,nw));
+let NEIGHBORS = [];
+function buildNeighbors(){
+  NEIGHBORS = new Array(N);
+  for(let i=0;i<N;i++){
+    const [x,y,z,w]=coords(i);
+    const list=[];
+    for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++)for(let dz=-1;dz<=1;dz++)for(let dw=-1;dw<=1;dw++){
+      if(!dx&&!dy&&!dz&&!dw) continue;
+      const nx=x+dx,ny=y+dy,nz=z+dz,nw=w+dw;
+      if(nx<0||nx>=SIZE||ny<0||ny>=SIZE||nz<0||nz>=SIZE||nw<0||nw>=SIZE) continue;
+      list.push(idx(nx,ny,nz,nw));
+    }
+    NEIGHBORS[i]=list;
   }
-  NEIGHBORS[i]=list;
 }
+buildNeighbors();
 
 function mulberry32(seed){
   let a = seed>>>0;
@@ -382,7 +393,13 @@ function solveLogically(mines, counts, startRevealed, CAP){
   return { solved: rc===totalSafe };
 }
 
-function generatePuzzle(mineCount, maxAttempts, CAP){
+// Only accept boards whose initial flood-reveal falls within a fixed size
+// band (as a fraction of the total board), so the opening reveal is roughly
+// consistent in scale from puzzle to puzzle instead of sometimes opening a
+// tiny patch and sometimes clearing half the board.
+function generatePuzzle(mineCount, maxAttempts, cap, minFrac, maxFrac){
+  const minReveal = Math.floor(N*minFrac), maxReveal = Math.ceil(N*maxFrac);
+  let fallback = null;
   for(let a=0;a<maxAttempts;a++){
     const seed = (Math.floor(Math.random()*2**31) ^ (a*2654435761)) >>> 0;
     const rng = mulberry32(seed);
@@ -391,11 +408,15 @@ function generatePuzzle(mineCount, maxAttempts, CAP){
     const start = pickStartCell(mines, counts);
     const startRevealed = new Uint8Array(N);
     floodReveal(mines, counts, start, startRevealed);
-    const res = solveLogically(mines, counts, startRevealed, CAP);
-    if(res.solved){
+    let rc=0; for(let i=0;i<N;i++) rc+=startRevealed[i];
+    const res = solveLogically(mines, counts, startRevealed, cap);
+    if(!res.solved) continue;
+    if(!fallback) fallback = { mines, counts, startRevealed, start };
+    if(rc>=minReveal && rc<=maxReveal){
       return { mines, counts, startRevealed, start };
     }
   }
+  if(fallback) return fallback;
   const rng = mulberry32(Date.now()>>>0);
   const mines = placeMines(rng, mineCount);
   const counts = computeCounts(mines);
@@ -421,7 +442,8 @@ function countClass(c){
 function newGame(){
   stopTimer();
   boomIndex = -1; hov = -1;
-  const puzzle = generatePuzzle(MINES, 400, 16);
+  const m = MODES[modeKey];
+  const puzzle = generatePuzzle(MINES, 600, CAP, m.minFrac, m.maxFrac);
   game = {
     mines: puzzle.mines,
     counts: puzzle.counts,
@@ -539,6 +561,7 @@ function axesFor(mode){
 function buildLayerSkeleton(){
   const grid = document.getElementById('layerGrid');
   grid.innerHTML='';
+  grid.style.gridTemplateColumns = `repeat(${SIZE}, auto)`;
   const { inner, outer } = axesFor(sliceMode);
   const coordOf = {};
   for(let o1=0; o1<SIZE; o1++){
@@ -551,6 +574,8 @@ function buildLayerSkeleton(){
       block.appendChild(label);
       const xyGrid = document.createElement('div');
       xyGrid.className='xyGrid';
+      xyGrid.style.gridTemplateColumns = `repeat(${SIZE}, 24px)`;
+      xyGrid.style.gridTemplateRows = `repeat(${SIZE}, 24px)`;
       for(let i2=0; i2<SIZE; i2++){
         for(let i1=0; i1<SIZE; i1++){
           coordOf[inner[0]] = i1; coordOf[inner[1]] = i2;
@@ -609,19 +634,31 @@ const cv = document.getElementById('cv');
 let ang = 35, spinning = false, zoom = 1;
 let yaw = .7, pit = .5, pts = [];
 
+// 4D->3D->2D projection, adapted from the open-source "hypercube" renderer
+// by Thibault Brun (github.com/ThibaultBrun/hypercube, MIT licensed).
+// It rotates each point in the XW plane by the 4D angle, then applies that
+// renderer's iterative perspective-division / Schlegel-diagram projection
+// (k = eyeDist / (eyeDist - w)) to flatten the extra axis into 3D, before a
+// standard 3D rotation (drag) and perspective projection onto the canvas.
 function proj(){
   const W = cv.clientWidth || 480, H = cv.clientHeight || 480;
   const cy=Math.cos(yaw), sy=Math.sin(yaw), cp=Math.cos(pit), sp=Math.sin(pit);
   const sc = (W/(3.6*SIZE))*zoom, h=(SIZE-1)/2, D0=SIZE*3.2, a=ang*Math.PI/180;
+  const eyeW = 5; // 4D eye distance for the w-axis perspective division
   const P=(x,y,z)=>{
     const x1=x*cy+z*sy, z1=-x*sy+z*cy, y1=y*cp-z1*sp, z2=y*sp+z1*cp, s=D0/(D0+z2);
     return {px:W/2+x1*sc*s, py:H/2+y1*sc*s, s, z:z2};
   };
   const o=[];
   for(let i=0;i<N;i++){
-    const w=(i/(SIZE*SIZE*SIZE))|0, x=i%SIZE-h, y=((i/SIZE)|0)%SIZE-h, z=((i/(SIZE*SIZE))|0)%SIZE-h;
-    const ww=w-h, k=1/(1-(x*Math.sin(a)+ww*Math.cos(a))/5);
-    const q=[(x*Math.cos(a)-ww*Math.sin(a))*k*1.7, y*k*1.7, z*k*1.7, k];
+    const wi=(i/(SIZE*SIZE*SIZE))|0, x=i%SIZE-h, y=((i/SIZE)|0)%SIZE-h, z=((i/(SIZE*SIZE))|0)%SIZE-h;
+    const w=wi-h;
+    // 4D rotation in the XW plane
+    const xr = x*Math.cos(a) - w*Math.sin(a);
+    const wr = x*Math.sin(a) + w*Math.cos(a);
+    // Schlegel-style perspective division: k = eyeW / (eyeW - w)
+    const k = eyeW/(eyeW - wr);
+    const q=[xr*k*1.7, y*k*1.7, z*k*1.7, k];
     const p=P(q[0],q[1],q[2]);
     o.push({i, px:p.px, py:p.py, r:sc*p.s*q[3]*.34, z:p.z});
   }
@@ -736,6 +773,21 @@ function showView(v){
 }
 document.getElementById('viewToggle').addEventListener('click', ()=>{
   showView(currentView==='layer' ? 'rot' : 'layer');
+});
+
+let modeKey = 3;
+function setMode(key){
+  modeKey = key;
+  const m = MODES[key];
+  SIZE = m.size; N = SIZE**4; MINES = m.mines; CAP = m.cap;
+  buildNeighbors();
+  buildLayerSkeleton();
+  document.getElementById('sizeToggle').textContent = m.label;
+  newGame();
+  renderAll();
+}
+document.getElementById('sizeToggle').addEventListener('click', ()=>{
+  setMode(modeKey===4 ? 3 : 4);
 });
 
 function setAngle(deg){

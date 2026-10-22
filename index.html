@@ -46,8 +46,27 @@
 
   .boardwrap{
     background:var(--panel); border:1px solid var(--line); border-radius:4px;
-    padding:16px; max-width:900px; width:100%;
+    padding:16px; max-width:900px; width:100%; position:relative;
   }
+
+  .endOverlay{
+    display:none; position:absolute; inset:0; background:rgba(44,39,31,0.6);
+    align-items:center; justify-content:center; z-index:6; border-radius:4px;
+  }
+  .endOverlay.show{ display:flex; }
+  .endBox{
+    background:var(--bg); border:1px solid var(--line); border-radius:4px;
+    padding:24px 28px; text-align:center; max-width:300px; width:100%;
+  }
+  .endBox h2{ margin:0 0 8px; font-family:'Fraunces',Georgia,serif; font-size:1.3em; }
+  .endBox h2.lose{ color:var(--mine); }
+  .endBox h2.win{ color:var(--accent); }
+  .endBox p{ margin:0 0 16px; color:var(--muted); font-size:0.88em; font-family:'IBM Plex Mono',monospace; }
+  .endBtns{ display:flex; flex-direction:column; gap:8px; }
+  .endBtns button{ width:100%; }
+
+  .floatNext{ display:none; position:absolute; top:10px; right:10px; z-index:7; }
+  .floatNext.show{ display:inline-block; }
 
   /* ---------- Layer view ---------- */
   #layerView{ display:none; }
@@ -72,6 +91,14 @@
   .cell.flag{ background:#e5d19a; color:var(--flag); }
   .cell.mine{ background:var(--mine); color:#f2ead7; }
   .cell.nb{ outline:2px solid var(--hi); outline-offset:-2px; }
+  .cell.devSafe{ outline:2px solid #2f8f5e; outline-offset:-2px; box-shadow:inset 0 0 0 1px #2f8f5e; }
+  .cell.devMine{ outline:2px solid #c23b2a; outline-offset:-2px; box-shadow:inset 0 0 0 1px #c23b2a; }
+  .devBadge{
+    position:absolute; top:10px; left:10px; z-index:7; font-family:'IBM Plex Mono',monospace;
+    font-size:0.68em; letter-spacing:0.5px; color:#2f8f5e; background:rgba(44,39,31,0.85);
+    padding:3px 8px; border:1px solid #2f8f5e; display:none;
+  }
+  .devBadge.show{ display:block; }
 
   .c1{color:#2f6f5e;} .c2{color:#3f7d32;} .c3{color:#a8491f;} .c4{color:#8c2f24;}
   .c5{color:#6a4c93;} .c6{color:#9c6b10;} .chigh{color:#7a1f3d;}
@@ -99,13 +126,6 @@
     content:''; position:absolute; top:-3px; left:50%; width:6px; height:6px;
     margin-left:-3px; background:var(--accent2); border-radius:50%;
   }
-
-  #message{
-    margin-top:12px; padding:9px 16px; border-radius:3px; font-weight:600; display:none;
-    text-align:center; max-width:500px; font-size:0.92em;
-  }
-  #message.win{ display:block; background:#dbe6d4; color:var(--accent); border:1px solid var(--accent);}
-  #message.lose{ display:block; background:#e8d2cc; color:var(--mine); border:1px solid var(--mine);}
 
   footer{ margin-top:18px; color:var(--muted); font-size:0.75em; text-align:center; }
 
@@ -166,9 +186,23 @@
     </div>
   </div>
 
-</div>
+  <div class="endOverlay" id="endOverlay">
+    <div class="endBox">
+      <h2 id="endTitle"></h2>
+      <p id="endStats"></p>
+      <div class="endBtns">
+        <button id="revealBtn">Show solved puzzle</button>
+        <button id="shareBtn" style="display:none;">Copy result</button>
+        <button id="nextBtn">New puzzle</button>
+      </div>
+    </div>
+  </div>
 
-<div id="message"></div>
+  <button class="floatNext" id="floatNextBtn">New puzzle</button>
+
+  <div class="devBadge" id="devBadge">ENGINE ON</div>
+
+</div>
 
 <footer>
   Made by Yohaan Master
@@ -426,6 +460,138 @@ function generatePuzzle(mineCount, maxAttempts, cap, minFrac, maxFrac){
   return { mines, counts, startRevealed, start };
 }
 
+// ---- Live analysis engine (dev mode) ----
+// Reuses the same constraint-propagation / subset / component-brute-force
+// deduction as the generator's solvability check, but runs against the
+// *current* board state (revealed numbers only) to report every cell that
+// can be proven safe or proven to be a mine right now, purely by logic.
+function analyzeLive(){
+  const revealed = game.revealed, counts = game.counts;
+  const knownMine = new Uint8Array(N);
+  const knownSafe = new Uint8Array(N);
+  while(true){
+    let changed=false;
+    const constraints=[];
+    for(let i=0;i<N;i++){
+      if(!revealed[i] || counts[i]<=0) continue;
+      const unknowns=[]; let remaining=counts[i];
+      for(const n of NEIGHBORS[i]){
+        if(knownMine[n]){ remaining--; continue; }
+        if(!revealed[n] && !knownSafe[n]) unknowns.push(n);
+      }
+      if(unknowns.length>0) constraints.push({unknowns, remaining});
+    }
+    for(const con of constraints){
+      if(con.remaining===0){
+        for(const u of con.unknowns) if(!knownSafe[u]){ knownSafe[u]=1; changed=true; }
+      } else if(con.remaining===con.unknowns.length){
+        for(const u of con.unknowns) if(!knownMine[u]){ knownMine[u]=1; changed=true; }
+      }
+    }
+    if(changed) continue;
+    const csets=constraints.map(c=>({set:new Set(c.unknowns), remaining:c.remaining}));
+    let subsetChanged=false;
+    outer:
+    for(let a=0;a<csets.length;a++){
+      for(let b=0;b<csets.length;b++){
+        if(a===b) continue;
+        const A=csets[a], B=csets[b];
+        if(A.set.size===0 || B.set.size===0 || A.set.size>=B.set.size) continue;
+        let isSub=true;
+        for(const x of A.set) if(!B.set.has(x)){ isSub=false; break; }
+        if(!isSub) continue;
+        const diffSet=[...B.set].filter(x=>!A.set.has(x));
+        const diffRem=B.remaining-A.remaining;
+        if(diffSet.length===0) continue;
+        if(diffRem===0){
+          for(const u of diffSet) if(!knownSafe[u]){ knownSafe[u]=1; subsetChanged=true; }
+          if(subsetChanged) break outer;
+        } else if(diffRem===diffSet.length){
+          for(const u of diffSet) if(!knownMine[u]){ knownMine[u]=1; subsetChanged=true; }
+          if(subsetChanged) break outer;
+        }
+      }
+    }
+    if(subsetChanged) continue;
+    const cellToConstraints=new Map();
+    constraints.forEach((c,ci)=>{
+      for(const u of c.unknowns){
+        if(!cellToConstraints.has(u)) cellToConstraints.set(u,[]);
+        cellToConstraints.get(u).push(ci);
+      }
+    });
+    const visitedC=new Uint8Array(constraints.length);
+    let bruteChanged=false;
+    for(let ci=0; ci<constraints.length && !bruteChanged; ci++){
+      if(visitedC[ci]) continue;
+      const compConstraints=[]; const compCellsSet=new Set();
+      const queue=[ci]; visitedC[ci]=1;
+      while(queue.length){
+        const cur=queue.pop();
+        compConstraints.push(cur);
+        for(const u of constraints[cur].unknowns){
+          compCellsSet.add(u);
+          for(const other of cellToConstraints.get(u)) if(!visitedC[other]){ visitedC[other]=1; queue.push(other); }
+        }
+      }
+      const compCells=[...compCellsSet];
+      if(compCells.length===0 || compCells.length>18) continue;
+      const cellIndexMap=new Map(compCells.map((c,i)=>[c,i]));
+      const validAssignments=[];
+      const totalCombos=1<<compCells.length;
+      for(let mask=0; mask<totalCombos; mask++){
+        let ok=true;
+        for(const cIdx of compConstraints){
+          const con=constraints[cIdx];
+          let cnt=0;
+          for(const u of con.unknowns) if(mask & (1<<cellIndexMap.get(u))) cnt++;
+          if(cnt!==con.remaining){ ok=false; break; }
+        }
+        if(ok) validAssignments.push(mask);
+      }
+      if(validAssignments.length===0) continue;
+      for(let bit=0; bit<compCells.length; bit++){
+        let allMine=true, allSafe=true;
+        for(const mask of validAssignments){
+          if(mask & (1<<bit)) allSafe=false; else allMine=false;
+          if(!allMine && !allSafe) break;
+        }
+        const cell=compCells[bit];
+        if(allMine && !knownMine[cell]){ knownMine[cell]=1; bruteChanged=true; }
+        else if(allSafe && !knownSafe[cell]){ knownSafe[cell]=1; bruteChanged=true; }
+      }
+    }
+    if(bruteChanged) continue;
+    break;
+  }
+  return { knownMine, knownSafe };
+}
+
+// ---------------- Dev / god mode (secret Konami toggle) ----------------
+let devMode = false;
+let devAnalysis = null;
+const KONAMI = ['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight','ArrowLeft','ArrowRight','b','a'];
+let konamiPos = 0;
+window.addEventListener('keydown', e=>{
+  const key = e.key.length===1 ? e.key.toLowerCase() : e.key;
+  const expected = KONAMI[konamiPos];
+  if(key === expected){
+    konamiPos++;
+    if(konamiPos === KONAMI.length){
+      konamiPos = 0;
+      devMode = !devMode;
+      document.getElementById('devBadge').classList.toggle('show', devMode);
+      refreshDevAnalysis();
+      renderAll();
+    }
+  } else {
+    konamiPos = (key === KONAMI[0]) ? 1 : 0;
+  }
+});
+function refreshDevAnalysis(){
+  devAnalysis = (devMode && game && !game.over) ? analyzeLive() : null;
+}
+
 // ---------------- Game state ----------------
 let game = null;
 let timerInterval = null, startTime = null;
@@ -455,9 +621,10 @@ function newGame(){
   game.revealed.set(puzzle.startRevealed);
   document.getElementById('mineCount').textContent = MINES;
   document.getElementById('flagCount').textContent = '0';
-  const msg = document.getElementById('message');
-  msg.style.display='none'; msg.className='';
+  document.getElementById('endOverlay').classList.remove('show');
+  document.getElementById('floatNextBtn').classList.remove('show');
   startTimer();
+  refreshDevAnalysis();
   renderAll();
 }
 
@@ -518,6 +685,7 @@ function act(i, flagAction){
   }
   let fc=0; for(let k=0;k<N;k++) fc+=game.flagged[k];
   document.getElementById('flagCount').textContent = fc;
+  refreshDevAnalysis();
   renderAll();
 }
 
@@ -534,19 +702,83 @@ function triggerLoss(i){
 function endGame(won){
   game.over = true; game.won = won;
   stopTimer();
-  const msg = document.getElementById('message');
-  if(won){
-    msg.textContent = 'Cleared — starting a new puzzle…';
-    msg.className = 'win';
-  } else {
-    for(let i=0;i<N;i++) if(game.mines[i]) game.revealed[i]=1;
-    msg.textContent = 'Boom — starting a new puzzle…';
-    msg.className = 'lose';
-  }
-  msg.style.display='block';
+  refreshDevAnalysis();
   renderAll();
-  setTimeout(newGame, 1400);
+  showEndOverlay(won);
 }
+
+async function copyToClipboard(text){
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext){
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  }catch(e){ /* fall through to legacy method */ }
+  try{
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  }catch(e){ return false; }
+}
+
+function fmtTime(){
+  const s = Math.floor((Date.now()-startTime)/1000);
+  const m = Math.floor(s/60), r = s%60;
+  return `${m}:${r.toString().padStart(2,'0')}`;
+}
+
+function showEndOverlay(won){
+  const overlay = document.getElementById('endOverlay');
+  const title = document.getElementById('endTitle');
+  const stats = document.getElementById('endStats');
+  const shareBtn = document.getElementById('shareBtn');
+  const revealBtn = document.getElementById('revealBtn');
+  revealBtn.textContent = 'Show solved puzzle';
+  revealBtn.disabled = false;
+  const t = fmtTime();
+  if(won){
+    title.textContent = 'Solved!';
+    title.className = 'win';
+    stats.textContent = `Time: ${t}`;
+    shareBtn.style.display='block';
+    shareBtn.textContent = 'Copy result';
+    shareBtn.onclick = async ()=>{
+      const m = MODES[modeKey];
+      const text = `I beat Hypersweeper on ${m.label} in ${t}!`;
+      const ok = await copyToClipboard(text);
+      shareBtn.textContent = ok ? 'Copied!' : 'Copy failed';
+    };
+  } else {
+    title.textContent = 'Boom!';
+    title.className = 'lose';
+    let found=0; for(let i=0;i<N;i++) if(game.mines[i] && game.flagged[i]) found++;
+    stats.textContent = `Time: ${t} · ${found}/${MINES} mines found`;
+    shareBtn.style.display='none';
+  }
+  overlay.classList.add('show');
+}
+
+document.getElementById('revealBtn').addEventListener('click', ()=>{
+  for(let i=0;i<N;i++) if(game.mines[i]) game.revealed[i]=1;
+  document.getElementById('endOverlay').classList.remove('show');
+  document.getElementById('floatNextBtn').classList.add('show');
+  renderAll();
+});
+document.getElementById('nextBtn').addEventListener('click', ()=>{
+  document.getElementById('endOverlay').classList.remove('show');
+  newGame();
+});
+document.getElementById('floatNextBtn').addEventListener('click', ()=>{
+  document.getElementById('floatNextBtn').classList.remove('show');
+  newGame();
+});
 
 // ---------------- Rendering: Layer View ----------------
 // sliceAxes value "ab_cd": a,b are the two grid (inner) axes, c,d are the two panel (outer) axes.
@@ -615,6 +847,10 @@ function paintCellElement(el, i, nbSet){
     return;
   }
   if(!game.revealed[i]){
+    if(devAnalysis){
+      if(devAnalysis.knownMine[i]) el.classList.add('devMine');
+      else if(devAnalysis.knownSafe[i]) el.classList.add('devSafe');
+    }
     el.textContent='';
     return;
   }
@@ -692,6 +928,13 @@ function draw(){
     }
     if(nbSet && (nbSet.has(i)||i===hov)){
       g.globalAlpha=1; g.strokeStyle='#a8491f'; g.lineWidth=2; g.stroke();
+    }
+    if(devAnalysis && !game.revealed[i]){
+      if(devAnalysis.knownMine[i]){
+        g.globalAlpha=1; g.strokeStyle='#c23b2a'; g.lineWidth=2.5; g.stroke();
+      } else if(devAnalysis.knownSafe[i]){
+        g.globalAlpha=1; g.strokeStyle='#2f8f5e'; g.lineWidth=2.5; g.stroke();
+      }
     }
     if(isGhost) continue;
     g.globalAlpha=1;
